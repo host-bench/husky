@@ -1,0 +1,16 @@
+{
+    "VictimUserName": "user",
+    "AttackerUserName": "user",
+    "VictimDataIpList": ["10.0.0.1", "10.0.0.2"],
+    "AttackerDataIpList": ["10.0.0.3", "10.0.0.4"],
+    "VictimMgmtIpList": ["192.168.0.1", "192.168.0.2"],
+    "AttackerMgmtIpList":["192.168.0.3", "192.168.0.4"],
+    "VictimDevice": "mlx5_0",
+    "VictimGid": 3,
+    "AttackerDevice" : "mlx5_0",
+    "AttackerGid" : 3,
+    "VictimPort": 3000,
+    "AttackerPort": 4000,
+    "Alpha": 0.85,
+    "directory": "./tests"
+}
