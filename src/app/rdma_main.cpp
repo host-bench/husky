@@ -2,7 +2,6 @@
 
 // Copyright (c) 2022 Duke University. All rights reserved.
 // Copyright (c) 2021 ByteDance Inc. All rights reserved.
-// Copyright (c) 2021 Duke University.  All rights reserved.
 
 // See LICENSE for license information
 
