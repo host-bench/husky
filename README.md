@@ -119,7 +119,7 @@ The actual monitor keys used by the test suite will be `rx_vport_rdma_unicast_by
 ## Publications
 
 The corresponding paper can be found here: 
-(Understanding RDMA Microarchitecture Resources for Performance Isolation)[https://www.usenix.org/conference/nsdi23/presentation/kong]
+[Understanding RDMA Microarchitecture Resources for Performance Isolation](https://www.usenix.org/conference/nsdi23/presentation/kong)
 
 ## Acknowledgement
 
