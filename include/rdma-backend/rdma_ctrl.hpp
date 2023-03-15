@@ -69,8 +69,8 @@ class IPCShm {
 
 class Test {
  protected:
-  int _alloc = 0;                 // phase for allocation
-  int _middle = 0;                // phase for dealloc & alloc
+  uint64_t _alloc = 0;                 // phase for allocation
+  uint64_t _middle = 0;                // phase for dealloc & alloc
   std::queue<void *> _res_queue;  // resource queue
                                   //  volatile int *_notify = nullptr;
   int _num_of_devices = 0;

@@ -86,12 +86,20 @@ namespace Collie {
 uint64_t Now64() {
   struct timespec tv;
   int res = clock_gettime(CLOCK_REALTIME, &tv);
+  if (res == -1) {
+    LOG(FATAL) << "clock_gettime failed: " << strerror(errno);
+    return 0;
+  }
   return (uint64_t)tv.tv_sec * 1000000llu + (uint64_t)tv.tv_nsec / 1000;
 }
 
 uint64_t Now64Ns() {
   struct timespec tv;
   int res = clock_gettime(CLOCK_REALTIME, &tv);
+  if (res == -1) {
+    LOG(FATAL) << "clock_gettime failed: " << strerror(errno);
+    return 0;
+  }
   return (uint64_t)tv.tv_sec * 1000000000llu + (uint64_t)tv.tv_nsec;
 }
 
@@ -179,7 +187,7 @@ struct ibv_qp_attr MakeQpAttr(enum ibv_qp_state state, enum ibv_qp_type qp_type,
         case IBV_QPT_RC:
           attr.max_dest_rd_atomic = FLAGS_max_qp_rd_atom;
           attr.min_rnr_timer = FLAGS_min_rnr_timer;
-          *attr_mask |= IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER;
+          *attr_mask |= IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER; // fall through
         case IBV_QPT_UC:
           attr.path_mtu = (enum ibv_mtu)FLAGS_mtu;
           attr.dest_qp_num = remote_qpn;
@@ -199,6 +207,8 @@ struct ibv_qp_attr MakeQpAttr(enum ibv_qp_state state, enum ibv_qp_type qp_type,
           break;
         case IBV_QPT_UD:
           break;
+        default:
+          LOG(ERROR) << "Unsupported QP type: " << qp_type;
       }
       break;
     case IBV_QPS_RTS:
@@ -217,6 +227,8 @@ struct ibv_qp_attr MakeQpAttr(enum ibv_qp_state state, enum ibv_qp_type qp_type,
         case IBV_QPT_UC:
         case IBV_QPT_UD:
           break;
+        default:
+          LOG(ERROR) << "Unsupported QP type: " << qp_type;
       }
       break;
     default:
@@ -260,7 +272,7 @@ bool ParametersCheck() {
     FLAGS_recv_batch = kMaxBatch;
   }
   if (FLAGS_run_infinitely) {
-    LOG(WARNING)
+    LOG(INFO)
         << "Running infinitely. The iterations parameters will be of no use.";
   }
   return true;
@@ -268,7 +280,6 @@ bool ParametersCheck() {
 
 int Initialize(int argc, char **argv) {
   google::InitGoogleLogging(argv[0]);
-  FLAGS_logtostderr = 1;
   gflags::ParseCommandLineFlags(&argc, &argv, true);
   if (!ParametersCheck()) return -1;
   return 0;

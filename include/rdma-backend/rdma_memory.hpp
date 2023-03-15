@@ -31,7 +31,7 @@ class rdma_region {
     int num_ = 0;
     uint32_t size_ = 0;
     bool align_ = false;
-    int ret_idx_ = 0;
+    size_t ret_idx_ = 0;
     //std::queue<rdma_buffer *> buffers_;
     std::vector<rdma_buffer *> buffers_;
   public:

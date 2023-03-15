@@ -77,7 +77,7 @@ int rdma_region::Mallocate(bool flag=false) {
         LOG(ERROR) << "ibv_reg_mr() failed";
         return -1;
     }
-    for (size_t i = 0; i < num_; i++) {
+    for (int i = 0; i < num_; i++) {
         rdma_buffer *rbuf = new rdma_buffer((uint64_t)(buffer + size_ * i), size_, mr_->lkey, mr_->rkey);
         buffers_.push_back(rbuf);
     }

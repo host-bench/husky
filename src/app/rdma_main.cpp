@@ -16,11 +16,11 @@ int main(int argc, char **argv) {
   ibv_fork_init();
   if (Collie::Initialize(argc, argv)) return -1;
 
-  std::thread listen_thread;
-  std::thread server_thread;
   // Set up server
   LOG(INFO) << "Traffic Engine starts";
   if (FLAGS_server) {
+    std::thread listen_thread;
+    std::thread server_thread;
     auto pici_server =
         new Collie::rdma_context(FLAGS_dev.c_str(), FLAGS_gid, FLAGS_host_num,
                                  FLAGS_qp_num, FLAGS_print_thp);
@@ -32,6 +32,8 @@ int main(int argc, char **argv) {
     server_thread =
         std::thread(&Collie::rdma_context::ServerDatapath, pici_server);
     LOG(INFO) << "Collie server has started.";
+    listen_thread.join();
+    server_thread.join();
   }
   // Set up client
   if (FLAGS_connect != "") {
@@ -64,8 +66,7 @@ int main(int argc, char **argv) {
             std::thread(&Collie::rdma_context::ClientDatapath, c));
     for (auto &t: client_threads)
       t.join();
+    return 0;
   }
-  listen_thread.join();
-  server_thread.join();
   return 0;
 }

@@ -32,14 +32,14 @@ int rdma_endpoint::PostSend(const std::vector<rdma_request> &requests, size_t & 
         wr_list[i].opcode = (enum ibv_wr_opcode)req.opcode;
         switch (wr_list[i].opcode) {
             case IBV_WR_RDMA_WRITE_WITH_IMM:
-                wr_list[i].imm_data = htonl(0xdeadbeaf);
+                wr_list[i].imm_data = htonl(0xdeadbeaf);    // Fall through
             case IBV_WR_RDMA_WRITE:
             case IBV_WR_RDMA_READ:
                 wr_list[i].wr.rdma.remote_addr = remote_buffer[rbuf_idx]->addr_;
                 wr_list[i].wr.rdma.rkey = remote_buffer[rbuf_idx]->rkey_;
                 break;
             case IBV_WR_SEND_WITH_IMM:
-                wr_list[i].imm_data = htonl(0xfeedbeee);
+                wr_list[i].imm_data = htonl(0xfeedbeee);  // Fall through
             case IBV_WR_SEND:
                 if (qp_type_ == IBV_QPT_UD) {
                     wr_list[i].wr.ud.remote_qkey = 0;
@@ -98,7 +98,7 @@ int rdma_endpoint::PostSend(const std::vector<rdma_request> &requests, size_t & 
 }
 
 int rdma_endpoint::PostRecv(const std::vector<rdma_request> &requests, size_t & req_idx, uint32_t batch_size) {
-    rdma_context *ctx = (rdma_context *)master_;
+    rdma_context *ctx = (rdma_context *)master_; // unused
     if (recv_credits_ < batch_size) {
         LOG(ERROR) << "PostRecv() failed. Credit not available: "
                    << recv_credits_ << " is less than " << batch_size;

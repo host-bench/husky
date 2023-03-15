@@ -30,6 +30,7 @@ class rdma_context {
     void *master_ = nullptr;
     // For connection setup (Local infomation)
     std::string devname_;
+    int local_gid_idx_;
     union ibv_gid local_gid_;
     std::string local_ip_;
     struct ibv_context *ctx_ = nullptr;
@@ -37,6 +38,8 @@ class rdma_context {
     uint8_t sl_;
     int port_;  // tcp port for server
     uint64_t completion_timestamp_mask_; 
+
+    struct ibv_device_attr device_attr_;
 
     // Memory Management
 #ifdef USE_CUDA
@@ -78,6 +81,7 @@ class rdma_context {
 
     // Basic Initialization: connection setup info.
     int InitDevice();
+    int CheckDeviceParams();
     int InitIds();
 
     // Memory Management and Transportation Allocation
@@ -101,7 +105,7 @@ class rdma_context {
 
  
   public:
-    rdma_context(const char *dev_name, int gid_idx, int num_of_hosts, int num_per_host, bool print_thp) : devname_(dev_name), num_of_hosts_(num_of_hosts), num_per_host_(num_per_host), _print_thp(print_thp) {}
+    rdma_context(const char *dev_name, int gid_idx, int num_of_hosts, int num_per_host, bool print_thp) : devname_(dev_name), local_gid_idx_(gid_idx), num_of_hosts_(num_of_hosts), num_per_host_(num_per_host), _print_thp(print_thp) {}
 
     int Init();
 

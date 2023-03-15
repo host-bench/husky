@@ -201,6 +201,24 @@ int rdma_context::Init() {
     return 0;
 }
 
+int rdma_context::CheckDeviceParams() {
+    if (ibv_query_device(this->ctx_, &this->device_attr_)) {
+        PLOG(ERROR) << "ibv_query_device() failed";
+        return -1;
+    }
+    if (kMaxSge > this->device_attr_.max_sge) {
+        LOG(ERROR) << "kMaxSge is too large. It should be less than " << this->device_attr_.max_sge;
+        LOG(ERROR) << "Please edit kMaxSge in rdma_context.h and recompile the code.";
+        return -1;
+    }
+    if (FLAGS_send_wq_depth > this->device_attr_.max_qp_wr || FLAGS_recv_wq_depth > this->device_attr_.max_qp_wr) {
+        LOG(ERROR) << "kSendWqDepth or kRecvWqDepth is too large. It should be less than " << this->device_attr_.max_qp_wr;
+        LOG(ERROR) << "kSendWqDepth: " << FLAGS_send_wq_depth << ", kRecvWqDepth: " << FLAGS_recv_wq_depth;
+        return -1;
+    }
+    return 0;
+}
+
 int rdma_context::InitDevice() {
     struct ibv_device *dev = nullptr;
     struct ibv_device **device_list = nullptr;
@@ -226,11 +244,16 @@ int rdma_context::InitDevice() {
         PLOG(ERROR) << "ibv_open_device() failed";
         return -1;
     }
+    ibv_free_device_list(device_list);
+    if (CheckDeviceParams() < 0) {
+        LOG(ERROR) << "CheckDeviceParams() failed";
+        return -1;
+    }
     send_cqs_.clear();
     recv_cqs_.clear();
     share_pd_ = FLAGS_share_pd;
     share_cq_ = FLAGS_share_cq;
-    if (ibv_query_gid(ctx_, 1, FLAGS_gid, &local_gid_) < 0) {
+    if (ibv_query_gid(ctx_, 1, local_gid_idx_, &local_gid_) < 0) {
         PLOG(ERROR) << "ibv_query_gid() failed";
         return -1;
     }
@@ -383,7 +406,6 @@ int rdma_context::InitMemory() {
 
 int rdma_context::InitTransport() {
     rdma_endpoint *ep = nullptr;
-    int cnt = 0;
     while (!ids_.empty()) {
         auto id = ids_.front();
         ids_.pop();
@@ -466,7 +488,7 @@ void rdma_context::SetEndpointInfo(rdma_endpoint *endpoint, struct connect_info 
     switch (endpoint->GetType()) {
         case IBV_QPT_UD:
             endpoint->SetLid(ntohl(info->info.channel.dlid));
-            endpoint->SetSl(ntohl(info->info.channel.sl));
+            endpoint->SetSl(ntohl(info->info.channel.sl)); // Fall through
         case IBV_QPT_UC:
         case IBV_QPT_RC:
             endpoint->SetQpn(ntohl(info->info.channel.qp_num));
@@ -482,7 +504,7 @@ void rdma_context::GetEndpointInfo(rdma_endpoint *endpoint, struct connect_info 
     switch (endpoint->GetType()) {
         case IBV_QPT_UD:
             info->info.channel.dlid = htonl(lid_);
-            info->info.channel.sl = htonl(sl_);
+            info->info.channel.sl = htonl(sl_); // Fall through
         case IBV_QPT_UC:
         case IBV_QPT_RC:
             info->info.channel.qp_num = htonl(endpoint->GetQpn());
@@ -678,7 +700,6 @@ int rdma_context::ConnectionSetup(const char *server, int port) {
     char *service;
     int n;
     int sockfd = -1;
-    int err;
     if (asprintf(&service, "%d", port) < 0)
         return -1;
     n = getaddrinfo(server, service, &hints, &res);
@@ -936,8 +957,7 @@ int rdma_context::ClientDatapath() {
         for (auto ep : endpoints_) {
             if (!ep) continue;                                // Ignore those dead ones
             if (!ep->GetActivated()) continue;                // YOU ARE NOT PREPARED!
-            if (batch_size > ep->GetSendCredits()) continue;  // YOU DON'T HAVE MONEY!
-            size_t i = 0;
+            if ( (int)batch_size > ep->GetSendCredits()) continue;  // YOU DON'T HAVE MONEY!
             // Shuffle the buffer that is used.
             for (auto& req : req_vec) {
                 for (int i = 0; i < req.sge_num; i++) {

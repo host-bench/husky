@@ -63,6 +63,10 @@ TestType StrToType(std::string const &str) {
 uint64_t Now64() {
   struct timespec tv;
   int res = clock_gettime(CLOCK_REALTIME, &tv);
+  if (res == -1) {
+    LOG(FATAL) << "clock_gettime failed: " << strerror(errno);
+    return 0;
+  }
   return (uint64_t)tv.tv_sec;
 }
 
@@ -308,7 +312,7 @@ void PdTest::DeallocPhase() {
 }
 
 CqTest::CqTest(int alloc, int middle, std::string ibdev, int num_cqe)
-    : _num_cqe(num_cqe), Test(alloc, middle) {
+    : Test(alloc, middle), _num_cqe(num_cqe) {
   _ctx = InitContext(ibdev);
   if (!_ctx) {
     LOG(ERROR) << __PRETTY_FUNCTION__ << " getting context";
@@ -340,7 +344,6 @@ void CqTest::AllocPhase() {
 }
 
 void CqTest::MiddlePhase() {
-  
   if (!_res_queue.empty()) {
     struct ibv_cq *cq = (struct ibv_cq *)_res_queue.front();
     if (ibv_destroy_cq(cq)) {
@@ -387,7 +390,7 @@ void CqTest::DeallocPhase() {
 }
 
 QpTest::QpTest(int alloc, int middle, std::string ibdev, QpTestParam param)
-    : _cap(param.cap), _type(param.type), Test(alloc, middle) {
+    : Test(alloc, middle),  _cap(param.cap), _type(param.type) {
   param.Print();
   auto ctx = InitContext(ibdev);  // All contexts here share the same ctx;
   if (param.num_pd < 1 || param.num_send_cq < 1 || param.num_recv_cq < 1) {
@@ -421,7 +424,7 @@ QpTest::QpTest(int alloc, int middle, std::string ibdev, QpTestParam param)
 
 void QpTest::AllocPhase() {
   
-  int send_cq_idx = 0, recv_cq_idx = 0, pd_idx = 0;
+  size_t send_cq_idx = 0, recv_cq_idx = 0, pd_idx = 0;
   auto start_ts = Now64();
   while (true) {
     auto cur_ts = Now64();
@@ -464,7 +467,7 @@ void QpTest::MiddlePhase() {
     }
     _res_queue.pop();
   }
-  int send_cq_idx = 0, recv_cq_idx = 0, pd_idx = 0;
+  size_t send_cq_idx = 0, recv_cq_idx = 0, pd_idx = 0;
   auto start_ts = Now64();
   while (true) {
     auto cur_ts = Now64();
@@ -514,7 +517,7 @@ void QpTest::DeallocPhase() {
 }
 
 MrTest::MrTest(int alloc, int middle, std::string ibdev, MrTestParam param)
-    : _size(param.size), _access(param.access), Test(alloc, middle) {
+    : Test(alloc, middle), _size(param.size), _access(param.access){
   param.Print();
   auto ctx = InitContext(ibdev);  // All contexts here share the same ctx;
   if (param.num_pd < 1 || param.num_buffer < 1) {
@@ -545,7 +548,7 @@ MrTest::MrTest(int alloc, int middle, std::string ibdev, MrTestParam param)
 
 void MrTest::AllocPhase() {
   
-  int pd_idx = 0, buf_idx = 0;
+  size_t pd_idx = 0, buf_idx = 0;
   auto start_ts = Now64();
   while (true) {
     auto cur_ts = Now64();
@@ -579,7 +582,7 @@ void MrTest::MiddlePhase() {
     }
     _res_queue.pop();
   }
-  int buf_idx = 0, pd_idx = 0;
+  size_t buf_idx = 0, pd_idx = 0;
   auto start_ts = Now64();
   while (true) {
     auto cur_ts = Now64();
@@ -712,10 +715,10 @@ void Run(std::vector<Test *> test_set) {
   IPCShm *ipc = new IPCShm(FLAGS_thread);
   std::thread ipc_thread = std::thread(&IPCThread, ipc);
   std::vector<std::thread> test_threads;
-  for (int i = 0; i < test_set.size(); i++) {
+  for (size_t i = 0; i < test_set.size(); i++) {
     test_threads.push_back(std::thread(&TestThread, test_set[i], ipc));
   }
-  for (int i = 0; i < test_set.size(); i++) {
+  for (size_t i = 0; i < test_set.size(); i++) {
     test_threads[i].join();
   }
   ipc_thread.join();
