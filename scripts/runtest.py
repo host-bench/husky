@@ -10,6 +10,7 @@ import argparse
 import os
 import json
 import time
+import re
 
 from husky_config import *
 
@@ -52,6 +53,33 @@ def List(config: dict):
         print ("      {}".format(attacker))
 
 
+def GetRuntimeInfo(file):
+    runtime_name_re = r"do (\w+)"
+    ports_re = r"\{(\d+)\.\.(\d+)\}"
+    target = 0
+    num_port = 0
+    with open(file, 'r') as f:
+        line = f.readline() 
+        try: 
+            runtime_name = re.search(runtime_name_re, line).group(1)
+            start_port = int(re.search(ports_re, line).group(1))
+            end_port = int(re.search(ports_re, line).group(2))
+            num_port = end_port - start_port + 1
+        except Exception as e:
+            print ("Error: cannot find runtime name in {}".format(file))
+            return None
+        if runtime_name == "RdmaEngine":
+            runtime_target_re = r"--qp_num=(\w+)"
+            target = int(re.search(runtime_target_re, line).group(1))
+        elif runtime_name == "RdmaCtrlTest":
+            target = 0
+        else:
+            runtime_target_re = r"-q (\w+)"
+            target = int(re.search(runtime_target_re, line).group(1))
+    # Note: some version of Perftest will have one extra QP per process for oob control.
+    print ("Runtime Name: {}, num_port: {}, num_qp: {}".format(runtime_name, num_port, target))
+    return [runtime_name, target * num_port]
+
 def SetupTraffic(config, file, verbose):
     run_cmd = ["bash", file]
     # This invoke the background process
@@ -63,6 +91,7 @@ def SetupTraffic(config, file, verbose):
 def MonitorVictim(config, victim):
     username = config[VICTIM_USER_NAME]
     receiver = config[VICTIM_MGMT_IP_LIST][RECEIVE_IDX]
+    monitor_key = config[MONITOR_KEY]
     for _ in victim.split('_'):
         if 'r' == _ or "read" == _:
             receiver = config[VICTIM_MGMT_IP_LIST][SEND_IDX]
@@ -82,7 +111,7 @@ def MonitorVictim(config, victim):
             return None,None
         ETH_DEV = eth_dev
     
-    cmd = "ssh {}@{} \'python3 /tmp/rdma_monitor.py --interface {} --count {}\'".format(username, receiver, eth_dev, MONITOR_SEC)
+    cmd = "ssh {}@{} \'python3 /tmp/rdma_monitor.py --interface {} --count {} --key {}\'".format(username, receiver, eth_dev, MONITOR_SEC, monitor_key)
     result = subprocess.check_output(cmd, shell=True).decode().split('\n')
     bps = float(result[0].split(':')[-1])
     pps = float(result[1].split(':')[-1])
@@ -97,23 +126,52 @@ def CleanupTraffics(config):
         cmd = "ssh {}@{} \'python3 /tmp/rdma_monitor.py --action kill  \' >/dev/null 2>/dev/null".format(config[VICTIM_USER_NAME], ip)
         subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL)
 
-def OneTest(config, victim, attacker, verbose: bool):
+
+def CheckRun(config, run_name, run_target, verbose: bool):
+    cmd = "ssh {}@{} \'python3 /tmp/rdma_monitor.py --action check --run_name {} --run_target {}\'".format(config[VICTIM_USER_NAME], config[VICTIM_MGMT_IP_LIST][RECEIVE_IDX], run_name, run_target)
+    #print (cmd)
+    output = int(subprocess.check_output(cmd, shell=True).decode())
+    if (verbose):
+        print ("target is {}. output is {}".format(run_target, output))
+    return output
+    
+
+def OneTest(config, victim, attacker, verbose: bool, num_test: int):
     global TEST_CNT
     global SUCCESS_CNT
-    # Set up victim 
-    SetupTraffic(config, victim, verbose)
-    # Get victim performance
-    bps, pps = MonitorVictim(config, victim)
     print  ("Test Case #{}".format(TEST_CNT + 1))
     OUTPUT ("Attacker: {}".format(attacker.split('/')[-1]))
     OUTPUT ("Victim:   {}".format(victim.split('/')[-1]))
+    # Set up victim 
+    runtime_info = GetRuntimeInfo(victim)
+    if runtime_info == None:
+        ERROR_OUTPUT ("[Error] Cannot get runtime info from {}".format(victim))
+        return
+    run_name, run_target = runtime_info
+    SetupTraffic(config, victim, verbose)
+    # Get victim performance
+    # TODO: wait until the traffic is set up
+    if CheckRun(config, run_name, run_target, verbose) == -1:
+        ERROR_OUTPUT ("[Error] Victim is not running")
+        CleanupTraffics(config)
+        return
+    bps, pps = MonitorVictim(config, victim)
     OUTPUT ("Victim performance w/o attacker:")
     OUTPUT ("        {:.3f} Gbps".format(bps))
     OUTPUT ("        {:.3f} Mpps".format(pps))
     # Set up attacker
+    # TODO: wait until the traffic is set up
+    runtime_info = GetRuntimeInfo(attacker)
+    if runtime_info == None:
+        ERROR_OUTPUT ("[Error] Cannot get runtime info from {}".format(victim))
+        CleanupTraffics(config)
+        return
+    run_name, run_target = runtime_info
     SetupTraffic(config, attacker, verbose)
-    # wait for a while
-    time.sleep(1)
+    if CheckRun(config, run_name, run_target, verbose) == -1:
+        ERROR_OUTPUT ("[Error] Attacker is not running")
+        CleanupTraffics(config)
+        return
     atk_bps, atk_pps = MonitorVictim(config, victim)
     OUTPUT ("[Under Attack] Victim performance:")
     OUTPUT ("        {:.3f} Gbps".format(atk_bps))
@@ -130,7 +188,7 @@ def OneTest(config, victim, attacker, verbose: bool):
         OUTPUT ("Test ...... Success")
         SUCCESS_CNT += 1
     TEST_CNT += 1
-    print ("Current test: {}/{} tests passed.".format(SUCCESS_CNT, TEST_CNT))
+    print ("Current test: {}/{} tests passed. (total: {})".format(SUCCESS_CNT, TEST_CNT, num_test))
     print ()
 
 def OUTPUT(message: str):
@@ -174,10 +232,16 @@ def GetTestList(config, args):
 
 def RunTests(config:dict, attackers: list, victims: list, verbose : bool):
     print ("Test start!!!!!")
-    print()
+    CleanupTraffics(config)
+    print ("Clean existing traffics (perftest/RdmaEngine/RdmaCtrl) on the host.")
+    num_attacker = len(attackers)
+    num_victim = len(victims)
+    print ("There are {} attacker(s) and {} victim(s)".format(num_attacker, num_victim))
+    num_test = num_attacker * num_victim
     for attacker in attackers:
         for victim in victims:
-            OneTest(config, victim, attacker, verbose)
+            OneTest(config, victim, attacker, verbose, num_test)
+    print ("All tests are done. {}/{} tests passed.".format(SUCCESS_CNT, TEST_CNT))
 
 def main():
     parser = argparse.ArgumentParser(description="Run Test")

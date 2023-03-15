@@ -13,11 +13,12 @@ import json
 import os
 from husky_config import *
 
-TE_SERVER_CMD_FMT = "ssh {}@{} -n -f \'for i in {{{}..{}}}; do {} --server --dev={} --port=$i --gid={} --run_infinitely {} >/dev/null & done\'"
-TE_CLIENT_CMD_FMT = "ssh {}@{} -n -f \'for i in {{{}..{}}}; do {} --dev={} --port=$i --gid={} --run_infinitely {} >/dev/null & done\'"
-PERF_SERVER_CMD_FMT = "ssh {}@{} -n -f \'for i in {{{}..{}}}; do {} -d {} -x {} -s {} -q {} -p $i --run_infinitely --report_gbits -F >/dev/null  & done \'"
-PERF_CLIENT_CMD_FMT = "ssh {}@{} -n -f \'for i in {{{}..{}}}; do {} -d {} -x {} -s {} -l {} -n {} -q {} -p $i --run_infinitely --report_gbits -F {} >/dev/null & done \'"
+TE_SERVER_CMD_FMT = "ssh {}@{} -n -f \'for i in {{{}..{}}}; do {} --server --dev={} --port=$i --gid={} --tos={} --run_infinitely {} >/dev/null & done\'"
+TE_CLIENT_CMD_FMT = "ssh {}@{} -n -f \'for i in {{{}..{}}}; do {} --dev={} --port=$i --gid={} --tos={} --run_infinitely {} >/dev/null & done\'"
+PERF_SERVER_CMD_FMT = "ssh {}@{} -n -f \'for i in {{{}..{}}}; do {} -d {} -x {} -s {} -q {} -p $i --run_infinitely --report_gbits -R -F --tos {} >/dev/null  & done \'"
+PERF_CLIENT_CMD_FMT = "ssh {}@{} -n -f \'for i in {{{}..{}}}; do {} -d {} -x {} -s {} -l {} -n {} -q {} -p $i --run_infinitely --report_gbits -R -F --tos {} {} >/dev/null & done \'"
 
+CTRL_CMD_FMT = ""
 # For RDMA part
 # Victim Traffics (21 synthetic)
 
@@ -86,6 +87,7 @@ def CheckConfig(config : dict):
         print ("Attacker Recver: {}@{}".format(config[ATTACKER_USER_NAME], config[ATTACKER_DATA_IP_LIST][RECEIVE_IDX]))
         print ("Alpha is: {} ".format(config[ALPHA]))
         print ("Scripts Folder: {}".format(config[DIRECTORY]))
+        print ("Verbose: {}".format(config[VERBOSE]))
     except Exception as e:
         print (e)
         return False
@@ -94,6 +96,8 @@ def CheckConfig(config : dict):
 def AppendToFile(filename: str, content: str):
     with open(filename, "a") as f:
         f.write(content + "\n")
+        # TODO: make sleep somewhere else
+        f.write("sleep 1\n")
 
 def GenerateBWAttacker(config: dict):
     folder = config[DIRECTORY]
@@ -104,15 +108,16 @@ def GenerateBWAttacker(config: dict):
     device = config[ATTACKER_DEVICE]
     gid = config[ATTACKER_GID]
     start_port = config[ATTACKER_PORT]
+    tos = config[ATTACKER_TOS]
     params = [PerfTestParam("BW-1MB", 16, 1, 1048576, 128), PerfTestParam("BW-4KB", 16, 4, 4096, 128)]
     opcodes = ["ib_write_bw", "ib_read_bw", "ib_send_bw"]
     for param in params: 
         end_port = start_port + param.core_num - 1
         for op in opcodes:
             server_cmd = PERF_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, op, device, 
-                                                gid, param.req_size, param.qp_num)
+                                                gid, param.req_size, param.qp_num, tos)
             client_cmd = PERF_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, op, device,
-                                               gid, param.req_size, param.batch_size, param.batch_size, param.qp_num, receiver)
+                                               gid, param.req_size, param.batch_size, max(param.batch_size, 5), param.qp_num, tos, receiver)
             AppendToFile("{}/attacker/BW/{}_{}.sh".format(folder, param.name, op), server_cmd)
             AppendToFile("{}/attacker/BW/{}_{}.sh".format(folder, param.name, op), client_cmd)
 
@@ -126,25 +131,26 @@ def GeneratePCIeAttacker(config: dict):
     device = config[ATTACKER_DEVICE]
     gid = config[ATTACKER_GID]
     start_port = config[ATTACKER_PORT]
+    tos = config[ATTACKER_TOS]
     te_pcie_param = TeTestParam("PCIe-size", 16, 6, 1024, 1, 1024, 0, 1, 1, 4096)
     requests = ["w_1_257", "w_1_129"]
     for req in requests:
         end_port = start_port + te_pcie_param.core_num - 1
-        server_cmd = TE_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, TE_ENGINE, device, gid, te_pcie_param.ToStr())
-        client_cmd = TE_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, TE_ENGINE, device, gid, te_pcie_param.ToStr() + " --request={} --connect={}".format(req, receiver))
+        server_cmd = TE_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, TE_ENGINE, device, gid, tos, te_pcie_param.ToStr())
+        client_cmd = TE_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, TE_ENGINE, device, gid, tos, te_pcie_param.ToStr() + " --request={} --connect={}".format(req, receiver))
         AppendToFile("{}/attacker/PCIe/{}_{}.sh".format(folder, te_pcie_param.name, req), server_cmd)
         AppendToFile("{}/attacker/PCIe/{}_{}.sh".format(folder, te_pcie_param.name, req), client_cmd)
     op = "ib_write_bw"
     perf_pcie_param = PerfTestParam("PCIe-loopback", 8, 1, 1048576, 1)
     end_port = start_port + perf_pcie_param.core_num
     # Receiver side loopback
-    server_cmd = PERF_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, op, device, gid, perf_pcie_param.req_size, perf_pcie_param.qp_num)
-    client_cmd = PERF_CLIENT_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, op, device, gid, perf_pcie_param.req_size, perf_pcie_param.batch_size, perf_pcie_param.batch_size, perf_pcie_param.qp_num, receiver)
+    server_cmd = PERF_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, op, device, gid, perf_pcie_param.req_size, perf_pcie_param.qp_num, tos)
+    client_cmd = PERF_CLIENT_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, op, device, gid, perf_pcie_param.req_size, perf_pcie_param.batch_size, max(perf_pcie_param.batch_size, 5), perf_pcie_param.qp_num, tos, receiver)
     AppendToFile("{}/attacker/PCIe/{}_{}.sh".format(folder, perf_pcie_param.name, "receiver"), server_cmd)
     AppendToFile("{}/attacker/PCIe/{}_{}.sh".format(folder, perf_pcie_param.name, "receiver"), client_cmd)
     # Sender side loopback
-    server_cmd = PERF_SERVER_CMD_FMT.format(username, mgmt_sender, start_port, end_port, op, device, gid, perf_pcie_param.req_size, perf_pcie_param.qp_num)
-    client_cmd = PERF_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, op, device, gid, perf_pcie_param.req_size, perf_pcie_param.batch_size, perf_pcie_param.batch_size, perf_pcie_param.qp_num, sender)
+    server_cmd = PERF_SERVER_CMD_FMT.format(username, mgmt_sender, start_port, end_port, op, device, gid, perf_pcie_param.req_size, perf_pcie_param.qp_num, tos)
+    client_cmd = PERF_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, op, device, gid, perf_pcie_param.req_size, perf_pcie_param.batch_size, max(perf_pcie_param.batch_size, 5), perf_pcie_param.qp_num, tos, sender)
     AppendToFile("{}/attacker/PCIe/{}_{}.sh".format(folder, perf_pcie_param.name, "sender"), server_cmd)
     AppendToFile("{}/attacker/PCIe/{}_{}.sh".format(folder, perf_pcie_param.name, "sender"), client_cmd)
 
@@ -158,13 +164,14 @@ def GeneratePUAttacker(config: dict):
     device = config[ATTACKER_DEVICE]
     gid = config[ATTACKER_GID]
     start_port = config[ATTACKER_PORT]
+    tos = config[ATTACKER_TOS]
     names = ["RC-RNR-longms", "RC-RNR-shortus", "UC-RNR", "UD-RNR"]
     args = ["--qp_type=2 --min_rnr_timer=0", "--qp_type=2 --min_rnr_timer=1", "--qp_type=3", "--qp_type=4"]
     te_rnr_param = TeTestParam("PU-RNR", 1, 1, 1, 1, 1, 0, 1, 1, 4096)
     for i in range(len(names)):
         end_port = start_port + te_rnr_param.core_num - 1
-        server_cmd = TE_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, TE_ENGINE, device, gid, "{} {}".format(te_rnr_param.ToStr(), args[i]))
-        client_cmd = TE_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, TE_ENGINE, device, gid, "{} {} --connect={} --request=s_1_4096".format(te_rnr_param.ToStr(), args[i], receiver))
+        server_cmd = TE_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, TE_ENGINE, device, gid, tos, "{} {}".format(te_rnr_param.ToStr(), args[i]))
+        client_cmd = TE_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, TE_ENGINE, device, gid, tos, "{} {} --connect={} --request=s_1_4096".format(te_rnr_param.ToStr(), args[i], receiver))
         AppendToFile("{}/attacker/PU/{}_{}.sh".format(folder, te_rnr_param.name, names[i]), server_cmd)
         AppendToFile("{}/attacker/PU/{}_{}.sh".format(folder, te_rnr_param.name, names[i]), client_cmd)
     
@@ -174,12 +181,12 @@ def GeneratePUAttacker(config: dict):
     names = ["write", "read", "send", "cas", "faa"]
     for i in range(len(names)):    
         end_port = start_port + perf_pu_param.core_num - 1
-        server_cmd = PERF_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, opcodes[i], device, gid, perf_pu_param.req_size, perf_pu_param.qp_num)
-        client_cmd = PERF_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, opcodes[i], device, gid, perf_pu_param.req_size, perf_pu_param.batch_size, perf_pu_param.batch_size, perf_pu_param.qp_num, receiver)
+        server_cmd = PERF_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, opcodes[i], device, gid, perf_pu_param.req_size, perf_pu_param.qp_num, tos)
+        client_cmd = PERF_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, opcodes[i], device, gid, perf_pu_param.req_size, perf_pu_param.batch_size, max(perf_pu_param.batch_size, 5), perf_pu_param.qp_num, tos, receiver)
         AppendToFile("{}/attacker/PU/{}_{}_forward.sh".format(folder, perf_pu_param.name, names[i]), server_cmd)
         AppendToFile("{}/attacker/PU/{}_{}_forward.sh".format(folder, perf_pu_param.name, names[i]), client_cmd)
-        server_cmd = PERF_SERVER_CMD_FMT.format(username, mgmt_sender, start_port, end_port, opcodes[i], device, gid, perf_pu_param.req_size, perf_pu_param.qp_num)
-        client_cmd = PERF_CLIENT_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, opcodes[i], device, gid, perf_pu_param.req_size, perf_pu_param.batch_size, perf_pu_param.batch_size, perf_pu_param.qp_num, sender)
+        server_cmd = PERF_SERVER_CMD_FMT.format(username, mgmt_sender, start_port, end_port, opcodes[i], device, gid, perf_pu_param.req_size, perf_pu_param.qp_num, tos)
+        client_cmd = PERF_CLIENT_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, opcodes[i], device, gid, perf_pu_param.req_size, perf_pu_param.batch_size, max(perf_pu_param.batch_size, 5), perf_pu_param.qp_num, tos, sender)
         AppendToFile("{}/attacker/PU/{}_{}_backward.sh".format(folder, perf_pu_param.name, names[i]), server_cmd)
         AppendToFile("{}/attacker/PU/{}_{}_backward.sh".format(folder, perf_pu_param.name, names[i]), client_cmd)
 
@@ -192,14 +199,15 @@ def GenerateCacheAttacker(config: dict):
     device = config[ATTACKER_DEVICE]
     gid = config[ATTACKER_GID]
     start_port = config[ATTACKER_PORT]
+    tos = config[ATTACKER_TOS]
     # Data verbs QPC Cache
     opcodes = ["ib_write_bw", "ib_read_bw", "ib_send_bw"]
     perf_qpc_param = PerfTestParam("Cache-QPC", 32, 16, 512, 1)
     for opcode in opcodes:
         end_port = start_port + perf_qpc_param.core_num - 1
-        server_cmd = PERF_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, opcode, device, gid, perf_qpc_param.req_size, perf_qpc_param.qp_num)
+        server_cmd = PERF_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, opcode, device, gid, perf_qpc_param.req_size, perf_qpc_param.qp_num, tos)
         client_cmd = PERF_CLIENT_CMD_FMT.format(
-            username, mgmt_sender, start_port, end_port, opcode, device, gid, perf_qpc_param.req_size, perf_qpc_param.batch_size, perf_qpc_param.batch_size, perf_qpc_param.qp_num, receiver)
+            username, mgmt_sender, start_port, end_port, opcode, device, gid, perf_qpc_param.req_size, perf_qpc_param.batch_size, max(perf_qpc_param.batch_size, 5), perf_qpc_param.qp_num, tos, receiver)
         AppendToFile("{}/attacker/Cache/{}_{}.sh".format(folder, perf_qpc_param.name, opcode), server_cmd)
         AppendToFile("{}/attacker/Cache/{}_{}.sh".format(folder, perf_qpc_param.name, opcode), client_cmd)
     # Data verbs MR (many small MR, few big MR, many big MR) Sender side and receiver side
@@ -214,8 +222,8 @@ def GenerateCacheAttacker(config: dict):
             te_access_param.buf_size = mr_size[i]
             te_access_param.mr_num = mr_num[i]
             end_port = start_port + te_access_param.core_num - 1
-            server_cmd = TE_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, TE_ENGINE, device, gid, "{} --receive=1_{}".format(te_access_param.ToStr(), te_access_param.buf_size))
-            client_cmd = TE_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, TE_ENGINE, device, gid, "{} --connect={} --request={}".format(te_access_param.ToStr(), receiver, req))
+            server_cmd = TE_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, TE_ENGINE, device, gid, tos, "{} --receive=1_{}".format(te_access_param.ToStr(), te_access_param.buf_size))
+            client_cmd = TE_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, TE_ENGINE, device, gid, tos, "{} --connect={} --request={}".format(te_access_param.ToStr(), receiver, req))
             name = "{}_{}".format(names[i], op)
             AppendToFile("{}/attacker/Cache/{}_{}.sh".format(folder, te_access_param.name, name), server_cmd)
             AppendToFile("{}/attacker/Cache/{}_{}.sh".format(folder, te_access_param.name, name), client_cmd)
@@ -234,9 +242,9 @@ def GenerateCacheAttacker(config: dict):
                 name = names[i] 
             ctrl_reg_param.mr_size = mr_size[i]
             ctrl_reg_param.num_buffer = buf_num[i]
-            attack_cmd = "ssh {}@{} -n -f \'{} --dev={} {} >/dev/null &\'".format(username, mgmt_sender, CTRL_ENGINE, device, ctrl_reg_param.ToStr())
+            attack_cmd = "ssh {}@{} -n -f \' for i in {{1..1}}; do {} --dev={} {} >/dev/null & done\'".format(username, mgmt_sender, CTRL_ENGINE, device, ctrl_reg_param.ToStr())
             AppendToFile("{}/attacker/Cache/{}_{}_sender.sh".format(folder, ctrl_reg_param.name, name), attack_cmd)
-            attack_cmd = "ssh {}@{} -n -f \'{} --dev={} {} >/dev/null &\'".format(username, mgmt_receiver, CTRL_ENGINE, device, ctrl_reg_param.ToStr())
+            attack_cmd = "ssh {}@{} -n -f \' for i in {{1..1}}; do {} --dev={} {} >/dev/null & done\'".format(username, mgmt_receiver, CTRL_ENGINE, device, ctrl_reg_param.ToStr())
             AppendToFile("{}/attacker/Cache/{}_{}_receiver.sh".format(folder, ctrl_reg_param.name, name), attack_cmd)
     ##      Recv WQE Cache - (SEND/RECV + READ)
     te_recv_test = TeTestParam("Cache-recvwqe", 8, 4, 1024, 64, 1024, 128, 1, 1, 4096)
@@ -246,8 +254,8 @@ def GenerateCacheAttacker(config: dict):
     for i in range(len(requests)):
         req = requests[i]
         te_recv_test.buf_size = buffer_size[i]
-        server_cmd = TE_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, TE_ENGINE, device, gid, "{} --receive=1_{}".format(te_recv_test.ToStr(), te_recv_test.buf_size))
-        client_cmd = TE_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, TE_ENGINE, device, gid, "{} --connect={} --request={}".format(te_recv_test.ToStr(), receiver, req))
+        server_cmd = TE_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, TE_ENGINE, device, gid, tos, "{} --receive=1_{}".format(te_recv_test.ToStr(), te_recv_test.buf_size))
+        client_cmd = TE_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, TE_ENGINE, device, gid, tos, "{} --connect={} --request={}".format(te_recv_test.ToStr(), receiver, req))
         name = names[i]
         AppendToFile("{}/attacker/Cache/{}_{}.sh".format(folder, te_recv_test.name, name), server_cmd)
         AppendToFile("{}/attacker/Cache/{}_{}.sh".format(folder, te_recv_test.name, name), client_cmd)
@@ -277,6 +285,7 @@ def GenerateVictimWorkloads(config: dict):
     device = config[VICTIM_DEVICE]
     gid = config[VICTIM_GID]
     start_port = config[VICTIM_PORT]
+    tos = config[VICTIM_TOS]
     # Step 1: generate basic perftest workloads
     opcodes = ["ib_write_bw", "ib_send_bw", "ib_read_bw"]
     params = [PerfTestParam("large_bw", 1, 1, 65536, 128), PerfTestParam("small_tput", 16, 8, 8, 16), PerfTestParam("mtu_tput", 16, 4, 4096, 16)]
@@ -285,8 +294,8 @@ def GenerateVictimWorkloads(config: dict):
         for param in params:
             end_port = start_port + param.core_num - 1
             # Perftest has some issue with "post_list". Don't add -l on receiver side.
-            server_cmd = PERF_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, op, device, gid, param.req_size, param.qp_num)
-            client_cmd = PERF_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, op, device, gid, param.req_size, param.batch_size, param.batch_size, param.qp_num, receiver)
+            server_cmd = PERF_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, op, device, gid, param.req_size, param.qp_num, tos)
+            client_cmd = PERF_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, op, device, gid, param.req_size, param.batch_size, param.batch_size, param.qp_num, tos, receiver)
             AppendToFile("{}/victim/{}_{}.sh".format(folder, param.name, op), server_cmd)
             AppendToFile("{}/victim/{}_{}.sh".format(folder, param.name, op), client_cmd)
 
@@ -299,8 +308,8 @@ def GenerateVictimWorkloads(config: dict):
         command_str = param.ToStr()
         end_port = start_port + param.core_num - 1
         for req in requests:
-            server_cmd = TE_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, TE_ENGINE, device, gid, command_str)
-            client_cmd = TE_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, TE_ENGINE, device, gid, command_str + " --request={} --connect={}".format(req, receiver))
+            server_cmd = TE_SERVER_CMD_FMT.format(username, mgmt_receiver, start_port, end_port, TE_ENGINE, device, gid, tos, command_str)
+            client_cmd = TE_CLIENT_CMD_FMT.format(username, mgmt_sender, start_port, end_port, TE_ENGINE, device, gid, tos, command_str + " --request={} --connect={}".format(req, receiver))
             AppendToFile("{}/victim/{}_{}.sh".format(folder, param.name, req), server_cmd)
             AppendToFile("{}/victim/{}_{}.sh".format(folder, param.name, req), client_cmd)
 
@@ -341,7 +350,13 @@ def main():
     if (not CheckConfig(config)):
         print ("Configuration invalid. Please double check your config json file.")
         exit()
+        
     FoldersInit(config)
+    if config[VERBOSE]:
+        global TE_SERVER_CMD_FMT
+        global TE_CLIENT_CMD_FMT
+        TE_SERVER_CMD_FMT = "ssh {}@{} -n -f \'for i in {{{}..{}}}; do {} --server --dev={} --port=$i --gid={} --tos={} --logtostderr=1 --run_infinitely {} >/dev/null & done\'"
+        TE_CLIENT_CMD_FMT = "ssh {}@{} -n -f \'for i in {{{}..{}}}; do {} --dev={} --port=$i --gid={} --tos={} --logtostderr=1 --run_infinitely {} >/dev/null & done\'" 
     GenerateVictimWorkloads(config)
     GenerateAttackerWorkloads(config)
 
