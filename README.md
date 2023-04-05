@@ -1,7 +1,7 @@
 # Husky
 Benchmark Suite for RDMA Performance Isolation
 
-**Note: we have unified our system into a general RDMA testing framework [`rdma-bench`](https://github.com/host-bench/rdma-bench). Husky will be further developed and maintained in the `test2-isolation` under that framework. This repo will no longer be monitored or updated.** 
+**Note: we have unified our system into a general RDMA testing framework `rdma-bench` (https://github.com/host-bench/rdma-bench). Husky will be further developed and maintained in the `test2-isolation` under that framework. This repo will no longer be monitored or updated.** 
 
 
 ## Quick Start
